@@ -32,6 +32,6 @@ exports.update = async (req, res) => {
 exports.remove = async (req, res) => {
   const tx = await Transaction.findById(req.params.id);
   if (!tx || tx.user.toString() !== req.user._id.toString()) return res.status(404).json({ message: 'Not found' });
-  await tx.remove();
+  await tx.deleteOne();
   res.json({ message: 'Deleted' });
 };
