@@ -41,6 +41,13 @@ NODE_ENV=development
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GOOGLE_REDIRECT_URI=http://localhost:5001/api/email/auth/callback
+
+# Email Sync Configuration (Optional - for automated syncing)
+# See EMAIL_SYNC_CONFIG.md for detailed configuration
+EMAIL_SYNC_ENABLED=true
+EMAIL_SYNC_INTERVAL=6h
+EMAIL_SYNC_WINDOW_HOURS=24
+EMAIL_SYNC_MAX_RESULTS=50
 ```
 
 4. Start the server
@@ -631,9 +638,185 @@ curl --location 'http://localhost:5001/api/email/emails?maxResults=50' \
 
 ---
 
+### 13. Get Sync Statistics
+
+**Endpoint:** `GET /api/email/sync/stats`
+
+**Description:** Get detailed sync statistics and preferences for the authenticated user
+
+**Headers:**
+```
+Authorization: Bearer <your_jwt_token>
+Content-Type: application/json
+```
+
+**Response:** `200 OK`
+```json
+{
+  "emailSyncEnabled": true,
+  "autoSyncEnabled": true,
+  "lastEmailSync": "2026-01-18T08:50:00.000Z",
+  "lastSyncStatus": "success",
+  "syncErrorCount": 0,
+  "emailSyncFrequency": "6h",
+  "syncWindowHours": 24,
+  "transactionsSinceLastSync": 5
+}
+```
+
+**cURL Example:**
+```bash
+curl --location 'http://localhost:5001/api/email/sync/stats' \
+--header 'Authorization: Bearer YOUR_JWT_TOKEN'
+```
+
+---
+
+### 14. Update Sync Preferences
+
+**Endpoint:** `PUT /api/email/sync/preferences`
+
+**Description:** Update email sync preferences for the authenticated user
+
+**Headers:**
+```
+Authorization: Bearer <your_jwt_token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "autoSyncEnabled": true,
+  "emailSyncFrequency": "1h",
+  "syncWindowHours": 48
+}
+```
+
+**Field Options:**
+- `autoSyncEnabled`: `true` or `false` - Enable/disable automatic syncing
+- `emailSyncFrequency`: `"1h"`, `"6h"`, `"12h"`, or `"24h"` - Sync frequency
+- `syncWindowHours`: Number (1-168) - How far back to look for emails
+
+**Response:** `200 OK`
+```json
+{
+  "message": "Sync preferences updated successfully",
+  "preferences": {
+    "autoSyncEnabled": true,
+    "emailSyncFrequency": "1h",
+    "syncWindowHours": 48
+  }
+}
+```
+
+**cURL Example:**
+```bash
+curl --location --request PUT 'http://localhost:5001/api/email/sync/preferences' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer YOUR_JWT_TOKEN' \
+--data '{
+  "autoSyncEnabled": true,
+  "emailSyncFrequency": "6h",
+  "syncWindowHours": 24
+}'
+```
+
+---
+
+### 15. Sync All Users (Admin)
+
+**Endpoint:** `POST /api/email/sync/all`
+
+**Description:** Trigger email sync for all users with Gmail connected (admin endpoint)
+
+**Headers:**
+```
+Authorization: Bearer <your_jwt_token>
+Content-Type: application/json
+```
+
+**Response:** `200 OK`
+```json
+{
+  "success": true,
+  "totalUsers": 5,
+  "successCount": 5,
+  "failureCount": 0,
+  "duration": 12543,
+  "results": [
+    {
+      "success": true,
+      "userId": "68c5967a47e30828cab23164",
+      "stats": {
+        "emailsProcessed": 11,
+        "transactionsCreated": 8,
+        "failedToParse": 3,
+        "duration": 2543
+      }
+    }
+  ]
+}
+```
+
+**cURL Example:**
+```bash
+curl --location --request POST 'http://localhost:5001/api/email/sync/all' \
+--header 'Authorization: Bearer YOUR_JWT_TOKEN'
+```
+
+---
+
+## 🤖 Automated Email Sync
+
+The backend includes an **automated email sync service** that runs in the background:
+
+### Features
+- ✅ **Scheduled syncing** - Automatically syncs emails at configurable intervals (default: every 6 hours)
+- ✅ **Per-user preferences** - Users can customize sync frequency and settings
+- ✅ **Error handling** - Tracks failures and continues with other users
+- ✅ **Duplicate prevention** - Avoids creating duplicate transactions
+- ✅ **Statistics tracking** - Monitors sync success rates and transaction creation
+
+### Configuration
+
+Configure in `.env` file:
+```env
+EMAIL_SYNC_ENABLED=true        # Enable/disable automatic syncing
+EMAIL_SYNC_INTERVAL=6h         # Sync frequency: 1h, 6h, 12h, 24h
+EMAIL_SYNC_WINDOW_HOURS=24     # How far back to look for emails
+EMAIL_SYNC_MAX_RESULTS=50      # Max emails to fetch per sync
+```
+
+See [EMAIL_SYNC_CONFIG.md](EMAIL_SYNC_CONFIG.md) for detailed configuration options.
+
+### How It Works
+
+1. Server starts and initializes scheduler
+2. Cron job runs at specified interval (e.g., every 6 hours)
+3. Finds all users with Gmail connected and auto-sync enabled
+4. For each user:
+   - Fetches transaction emails
+   - Parses transaction details
+   - Creates transactions (skips duplicates)
+   - Updates sync status
+5. Logs results to console
+
+### Server Logs
+
+```
+[Scheduler] Email sync scheduled: 6h (0 */6 * * *)
+[EmailSync] Starting sync for all users...
+[EmailSync] Found 5 users to sync
+[EmailSync] Completed for user: 3 transactions created in 2543ms
+[EmailSync] Completed all users: 5 succeeded, 0 failed
+```
+
+---
+
 ## ❤️ Health Check
 
-### 12. Health Check
+### 16. Health Check
 
 **Endpoint:** `GET /health`
 
