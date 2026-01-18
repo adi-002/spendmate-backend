@@ -2,6 +2,7 @@
 require('dotenv').config();
 const connectDB = require('./src/config/db');
 const app = require('./src/app');
+const scheduler = require('./src/scheduler');
 
 const PORT = process.env.PORT || 5000;
 
@@ -9,6 +10,9 @@ connectDB()
   .then(() => {
     app.listen(PORT, () => {
       console.log(`Server listening on http://localhost:${PORT}`);
+
+      // Initialize scheduler after server starts
+      scheduler.init();
     });
   })
   .catch((err) => {
