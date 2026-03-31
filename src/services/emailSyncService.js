@@ -47,26 +47,58 @@ class EmailSyncService {
                     const subject = emailService.getEmailSubject(email);
                     const body = emailService.getEmailBody(email);
                     const sender = emailService.getEmailSender(email);
+                    const emailDate = emailService.getEmailDate(email);
+                    const emailMessageId = String(email?.id || '');
 
                     // Parse transaction
                     const transactionData = transactionParser.parseTransaction(body, subject, sender);
 
                     if (transactionData) {
-                        // Check for duplicates
-                        const existingTransaction = await Transaction.findOne({
+                        const docToInsert = {
                             user: userId,
-                            amount: transactionData.amount,
-                            date: transactionData.date,
-                            'metadata.emailSubject': subject,
-                        });
+                            ...transactionData,
+                            source: 'email',
+                            metadata: {
+                                ...(transactionData.metadata || {}),
+                                emailMessageId,
+                                emailSubject: subject,
+                                emailSender: sender,
+                                emailDate,
+                            },
+                        };
 
-                        if (!existingTransaction) {
-                            const transaction = await Transaction.create({
+                        if (emailMessageId) {
+                            const result = await Transaction.findOneAndUpdate(
+                                {
+                                    user: userId,
+                                    'metadata.emailMessageId': emailMessageId,
+                                },
+                                { $setOnInsert: docToInsert },
+                                {
+                                    upsert: true,
+                                    new: true,
+                                    rawResult: true,
+                                },
+                            );
+                            if (!result?.lastErrorObject?.updatedExisting && result?.value) {
+                                createdTransactions.push(result.value);
+                                createdCount++;
+                            }
+                        } else {
+                            const existingTransaction = await Transaction.findOne({
                                 user: userId,
-                                ...transactionData,
+                                amount: transactionData.amount,
+                                type: transactionData.type,
+                                description: transactionData.description,
+                                'metadata.emailSubject': subject,
+                                'metadata.emailSender': sender,
                             });
-                            createdTransactions.push(transaction);
-                            createdCount++;
+
+                            if (!existingTransaction) {
+                                const transaction = await Transaction.create(docToInsert);
+                                createdTransactions.push(transaction);
+                                createdCount++;
+                            }
                         }
                     } else {
                         failedCount++;

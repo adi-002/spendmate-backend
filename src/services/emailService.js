@@ -24,7 +24,7 @@ class EmailService {
     }
 
     /**
-     * Exchange authorization code for tokens
+     * Exchange authorization code for tokens (browser redirect flow)
      */
     async getTokensFromCode(code) {
         const { tokens } = await this.oauth2Client.getToken(code);
@@ -32,15 +32,31 @@ class EmailService {
     }
 
     /**
+     * Exchange Google Sign-In `serverAuthCode` (from mobile) for tokens.
+     * Must use the same Web OAuth client id/secret as the app `webClientId`.
+     * redirect_uri must be empty for this grant type.
+     */
+    async getTokensFromServerAuthCode(serverAuthCode) {
+        const { tokens } = await this.oauth2Client.getToken({
+            code: serverAuthCode,
+            redirect_uri: '',
+        });
+        return tokens;
+    }
+
+    /**
      * Save Gmail tokens to user
      */
     async saveTokens(userId, tokens) {
-        await User.findByIdAndUpdate(userId, {
-            gmailRefreshToken: tokens.refresh_token,
+        const update = {
             gmailAccessToken: tokens.access_token,
-            gmailTokenExpiry: new Date(tokens.expiry_date),
+            gmailTokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date) : new Date(Date.now() + 3600 * 1000),
             emailSyncEnabled: true,
-        });
+        };
+        if (tokens.refresh_token) {
+            update.gmailRefreshToken = tokens.refresh_token;
+        }
+        await User.findByIdAndUpdate(userId, update);
     }
 
     /**
@@ -103,7 +119,9 @@ class EmailService {
                     id: message.id,
                     format: 'full',
                 });
-                emails.push(msg.data);
+                if (this.hasDebitOrCreditSignal(msg.data)) {
+                    emails.push(msg.data);
+                }
             } catch (error) {
                 console.error(`Error fetching message ${message.id}:`, error.message);
             }
@@ -114,6 +132,7 @@ class EmailService {
             lastEmailSync: new Date(),
         });
 
+        console.log(`[EmailSync] Filtered emails with debit/credit signal: ${emails.length}`);
         return emails;
     }
 
@@ -121,36 +140,95 @@ class EmailService {
      * Build Gmail search query for transaction emails
      */
     buildSearchQuery(options = {}) {
-        const queries = [];
+        const parts = [];
 
-        // Date filter - default to last 7 days if not specified
+        // ── Date filter ──────────────────────────────────────────────
         if (options.after) {
-            queries.push(`after:${options.after}`);
+            parts.push(`after:${options.after}`);
         } else {
             const sevenDaysAgo = new Date();
             sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
             const dateStr = sevenDaysAgo.toISOString().split('T')[0].replace(/-/g, '/');
-            queries.push(`after:${dateStr}`);
+            parts.push(`after:${dateStr}`);
         }
 
-        // Common transaction email patterns
+        // ── Known bank / payment app senders ─────────────────────────
+        const senderAddresses = [
+            // Major Indian banks
+            'alerts@hdfcbank.net',
+            'alerts@icicibank.com',
+            'alerts@axisbank.com',
+            'donotreply@sbi.co.in',
+            'alerts@kotak.com',
+            'alerts@indusind.com',
+            'alerts@yesbank.in',
+            'alerts@idbibank.co.in',
+            'alerts@pnb.co.in',
+            'alerts@rblbank.com',
+            'alerts@federalbank.co.in',
+            'alerts@idfcfirstbank.com',
+            'alerts@canarabank.com',
+            'alerts@unionbankofindia.co.in',
+            'alerts@bobfinancial.com',
+            // Payment apps & wallets
+            'no-reply@paytm.com',
+            'support@phonepe.com',
+            'noreply@googleplay.com',
+            'auto-confirm@amazon.in',
+            'noreply@amazonpay.in',
+            'no-reply@cred.club',
+            'noreply@simpl.co',
+            'noreply@lazypay.in',
+            'support@slice.co',
+            'noreply@jupiter.money',
+            'noreply@fi.money',
+            'noreply@niyo.co',
+            // Credit cards
+            'creditcards@hdfcbank.net',
+            'cc.statements@icicibank.com',
+        ];
+
+        // ── Transaction keywords (body content) ─────────────────────
         const transactionKeywords = [
-            'debited', 'credited', 'transaction', 'payment', 'spent', 'received',
-            'UPI', 'IMPS', 'NEFT', 'RTGS', 'ATM', 'purchase', 'refund'
+            'debited', 'credited', 'transaction', 'payment successful',
+            'spent', 'received', 'transfer', 'withdrawn', 'deposited',
+            'UPI', 'IMPS', 'NEFT', 'RTGS', 'ATM withdrawal',
+            'purchase', 'refund', 'cashback', 'EMI', 'autopay',
+            'account ending', 'a/c', 'INR', 'Rs.', 'Rs ',
         ];
 
-        // Common sender domains for Indian banks and payment apps
-        const senderDomains = [
-            'hdfcbank', 'icicibank', 'sbi.co.in', 'axisbank', 'kotak',
-            'paytm', 'phonepe', 'googlepay', 'amazonpay', 'bhim',
-            'alerts', 'notification', 'noreply'
+        // ── Subject-line patterns ────────────────────────────────────
+        const subjectKeywords = [
+            'transaction alert', 'debit alert', 'credit alert',
+            'payment received', 'payment confirmation', 'money sent',
+            'money received', 'bank alert', 'account debited',
+            'account credited', 'UPI transaction', 'order confirmed',
         ];
 
-        // Build keyword query
+        // ── Build the combined query ─────────────────────────────────
+        // Strategy: (from:bank1 OR from:bank2 ...) OR (keyword1 OR keyword2 ...) OR (subject:...)
+        // This catches emails from known senders AND emails with transaction terms
+
+        const fromQuery = senderAddresses.map(addr => `from:${addr}`).join(' OR ');
         const keywordQuery = transactionKeywords.map(k => `"${k}"`).join(' OR ');
-        queries.push(`(${keywordQuery})`);
+        const subjectQuery = subjectKeywords.map(k => `subject:"${k}"`).join(' OR ');
 
-        return queries.join(' ');
+        parts.push(`((${fromQuery}) OR (${keywordQuery}) OR (${subjectQuery}))`);
+        // Hard requirement: transaction signal must mention debited/credited.
+        parts.push(`("debited" OR "credited")`);
+
+        const finalQuery = parts.join(' ');
+        console.log('📧 Gmail search query:', finalQuery);
+        return finalQuery;
+    }
+
+    /**
+     * Keep only emails that clearly indicate money movement.
+     * User requirement: snippet should contain "debited" or "credited".
+     */
+    hasDebitOrCreditSignal(message) {
+        const snippet = String(message?.snippet || '').toLowerCase();
+        return /\b(debited|credited)\b/.test(snippet);
     }
 
     /**

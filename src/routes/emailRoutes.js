@@ -12,6 +12,9 @@ router.get('/auth/url', emailController.getAuthUrl);
 // Handle OAuth callback
 router.post('/auth/callback', emailController.handleCallback);
 
+// Google Sign-In serverAuthCode (after mobile login — same consent screen)
+router.post('/auth/server', emailController.exchangeServerAuthCode);
+
 // Manually trigger email sync
 router.post('/sync', emailController.syncEmails);
 

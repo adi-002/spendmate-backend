@@ -12,4 +12,17 @@ const transactionSchema = new mongoose.Schema({
   metadata: { type: Object }, // raw parser info, vendor, txId etc
 }, { timestamps: true });
 
+// Prevent duplicate email-imported transactions for the same Gmail message.
+// This remains sparse for non-email/manual transactions.
+transactionSchema.index(
+  { user: 1, 'metadata.emailMessageId': 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      source: 'email',
+      'metadata.emailMessageId': { $exists: true, $type: 'string' },
+    },
+  },
+);
+
 module.exports = mongoose.model('Transaction', transactionSchema);

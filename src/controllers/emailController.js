@@ -44,6 +44,30 @@ exports.handleCallback = async (req, res) => {
 };
 
 /**
+ * Link Gmail using Google Sign-In serverAuthCode (single consent at app login).
+ * Body: { serverAuthCode: string }
+ */
+exports.exchangeServerAuthCode = async (req, res) => {
+    try {
+        const { serverAuthCode } = req.body;
+        if (!serverAuthCode || typeof serverAuthCode !== 'string') {
+            return res.status(400).json({ message: 'serverAuthCode is required' });
+        }
+
+        const tokens = await emailService.getTokensFromServerAuthCode(serverAuthCode);
+        await emailService.saveTokens(req.user._id, tokens);
+
+        res.json({
+            message: 'Gmail connected successfully',
+            emailSyncEnabled: true,
+        });
+    } catch (error) {
+        console.error('Error exchanging server auth code:', error);
+        res.status(500).json({ message: 'Failed to link Gmail', error: error.message });
+    }
+};
+
+/**
  * Manually trigger email sync
  */
 exports.syncEmails = async (req, res) => {
@@ -75,30 +99,72 @@ exports.syncEmails = async (req, res) => {
                 const body = emailService.getEmailBody(email);
                 const sender = emailService.getEmailSender(email);
                 const emailDate = emailService.getEmailDate(email);
+                const emailMessageId = String(email?.id || '');
+
+                console.log(`\n📩 Processing email ${processedCount}/${emails.length}: "${subject}" from ${sender}`);
 
                 // Parse transaction
                 const transactionData = transactionParser.parseTransaction(body, subject, sender);
 
                 if (transactionData) {
-                    // Check if transaction already exists (avoid duplicates)
-                    const existingTransaction = await Transaction.findOne({
+                    const docToInsert = {
                         user: req.user._id,
-                        amount: transactionData.amount,
-                        date: transactionData.date,
-                        'metadata.emailSubject': subject,
-                    });
+                        ...transactionData,
+                        source: 'email',
+                        metadata: {
+                            ...(transactionData.metadata || {}),
+                            emailMessageId,
+                            emailSubject: subject,
+                            emailSender: sender,
+                            emailDate,
+                        },
+                    };
 
-                    if (!existingTransaction) {
-                        // Create transaction
-                        const transaction = await Transaction.create({
+                    // Atomic dedupe by Gmail message id; handles repeated logins and concurrent syncs safely.
+                    if (emailMessageId) {
+                        const result = await Transaction.findOneAndUpdate(
+                            {
+                                user: req.user._id,
+                                'metadata.emailMessageId': emailMessageId,
+                            },
+                            { $setOnInsert: docToInsert },
+                            {
+                                upsert: true,
+                                new: true,
+                                rawResult: true,
+                            },
+                        );
+
+                        if (result?.lastErrorObject?.updatedExisting) {
+                            console.log(`   ⏭️ Skipped (duplicate email id): ₹${transactionData.amount}`);
+                        } else if (result?.value) {
+                            createdTransactions.push(result.value);
+                            createdCount++;
+                            console.log(`   ✅ Created: ₹${transactionData.amount} (${transactionData.type})`);
+                        }
+                    } else {
+                        // Fallback dedupe if message id is unavailable (rare).
+                        const existingTransaction = await Transaction.findOne({
                             user: req.user._id,
-                            ...transactionData,
+                            amount: transactionData.amount,
+                            type: transactionData.type,
+                            description: transactionData.description,
+                            'metadata.emailSubject': subject,
+                            'metadata.emailSender': sender,
                         });
-                        createdTransactions.push(transaction);
-                        createdCount++;
+
+                        if (!existingTransaction) {
+                            const transaction = await Transaction.create(docToInsert);
+                            createdTransactions.push(transaction);
+                            createdCount++;
+                            console.log(`   ✅ Created: ₹${transactionData.amount} (${transactionData.type})`);
+                        } else {
+                            console.log(`   ⏭️ Skipped (duplicate fallback): ₹${transactionData.amount}`);
+                        }
                     }
                 } else {
                     failedCount++;
+                    console.log(`   ❌ Could not parse transaction from this email`);
                 }
             } catch (error) {
                 console.error('Error processing email:', error);
