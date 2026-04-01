@@ -33,6 +33,14 @@ exports.handleCallback = async (req, res) => {
         // Save tokens to user
         await emailService.saveTokens(req.user._id, tokens);
 
+        const userAfter = await User.findById(req.user._id);
+        if (!userAfter?.gmailRefreshToken) {
+            return res.status(400).json({
+                message:
+                    'Gmail did not return a refresh token. Revoke app access in your Google account and connect again.',
+            });
+        }
+
         res.json({
             message: 'Gmail connected successfully',
             emailSyncEnabled: true,
@@ -57,6 +65,14 @@ exports.exchangeServerAuthCode = async (req, res) => {
         const tokens = await emailService.getTokensFromServerAuthCode(serverAuthCode);
         await emailService.saveTokens(req.user._id, tokens);
 
+        const userAfter = await User.findById(req.user._id);
+        if (!userAfter?.gmailRefreshToken) {
+            return res.status(400).json({
+                message:
+                    'Gmail did not return a refresh token. Sign out of the app and sign in again with Google, or reconnect Gmail from Profile.',
+            });
+        }
+
         res.json({
             message: 'Gmail connected successfully',
             emailSyncEnabled: true,
@@ -74,7 +90,7 @@ exports.syncEmails = async (req, res) => {
     try {
         const user = await User.findById(req.user._id);
 
-        if (!user.emailSyncEnabled) {
+        if (!user.emailSyncEnabled || !user.gmailRefreshToken) {
             return res.status(400).json({ message: 'Gmail not connected. Please authorize first.' });
         }
 
@@ -240,7 +256,7 @@ exports.getRecentEmails = async (req, res) => {
     try {
         const user = await User.findById(req.user._id);
 
-        if (!user.emailSyncEnabled) {
+        if (!user.emailSyncEnabled || !user.gmailRefreshToken) {
             return res.status(400).json({ message: 'Gmail not connected. Please authorize first.' });
         }
 

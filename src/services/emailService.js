@@ -45,13 +45,21 @@ class EmailService {
     }
 
     /**
-     * Save Gmail tokens to user
+     * Save Gmail tokens to user.
+     * Only enable sync when we have a refresh token (new or already stored); access-only tokens are not enough for Gmail API.
      */
     async saveTokens(userId, tokens) {
+        const user = await User.findById(userId);
+        if (!user) {
+            throw new Error('User not found');
+        }
+        const refreshToken = tokens.refresh_token || user.gmailRefreshToken || null;
         const update = {
-            gmailAccessToken: tokens.access_token,
-            gmailTokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date) : new Date(Date.now() + 3600 * 1000),
-            emailSyncEnabled: true,
+            gmailAccessToken: tokens.access_token || user.gmailAccessToken,
+            gmailTokenExpiry: tokens.expiry_date
+                ? new Date(tokens.expiry_date)
+                : new Date(Date.now() + 3600 * 1000),
+            emailSyncEnabled: !!refreshToken,
         };
         if (tokens.refresh_token) {
             update.gmailRefreshToken = tokens.refresh_token;
