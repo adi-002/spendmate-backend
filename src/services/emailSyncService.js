@@ -54,6 +54,8 @@ class EmailSyncService {
                     const transactionData = transactionParser.parseTransaction(body, subject, sender);
 
                     if (transactionData) {
+                        // Use the email header date as source-of-truth instead of parsing date strings from body text.
+                        transactionData.date = emailDate;
                         const docToInsert = {
                             user: userId,
                             ...transactionData,
@@ -259,8 +261,8 @@ class EmailSyncService {
 
         // Validate sync window
         if (updates.syncWindowHours) {
-            if (updates.syncWindowHours < 1 || updates.syncWindowHours > 168) {
-                throw new Error('Sync window must be between 1 and 168 hours (7 days)');
+            if (updates.syncWindowHours < 1 || updates.syncWindowHours > 720) {
+                throw new Error('Sync window must be between 1 and 720 hours (30 days)');
             }
         }
 

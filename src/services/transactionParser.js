@@ -304,6 +304,9 @@ class TransactionParser {
      */
     extractUpiCounterparty(text) {
         const patterns = [
+            // HDFC (and similar): "by VPA 7000385306@upi SANGITASHRIVASTVA on 05-03-26"
+            // or "by VPA 8521610724@pthdfc POOJA KUMARI on 06-03-26"
+            /by\s+VPA\s+[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\s+([A-Za-z][A-Za-z0-9\s.'-]{1,60}?)\s+on\s/i,
             /to\s+VPA\s+[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\s+([A-Za-z][A-Za-z\s.'-]{1,40}?)(?:\s+on\s|\.\s*|$)/i,
             /(?:paid\s+to|sent\s+to|to)\s+([A-Za-z][A-Za-z\s.'-]{1,40}?)(?:\s+on\s|\s+via\s|\.\s*|$)/i,
         ];
@@ -351,31 +354,38 @@ class TransactionParser {
      * Extract date from email body
      */
     extractDate(text) {
-        const patterns = [
-            // "on 29-03-26" or "on 29/03/2026"
+        // Numeric date: always treat as DD-MM-YY(YY) / DD/MM/YY(YY)
+        const numericPatterns = [
             /on\s+(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-            // "date: 29-03-2026"
             /date[:\s]+(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-            // "29 Mar 2026" or "29-Mar-26"
-            /(\d{1,2}[\s-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s-]\d{2,4})/i,
+            /\b(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})\b/,
         ];
 
-        for (const pattern of patterns) {
+        for (const pattern of numericPatterns) {
             const match = text.match(pattern);
-            if (match) {
-                const parsed = new Date(match[1]);
-                if (!isNaN(parsed.getTime())) return parsed;
+            if (!match) continue;
 
-                // Handle DD-MM-YY(YY) format manually
-                const parts = match[1].split(/[-\/]/);
-                if (parts.length === 3) {
-                    let [day, month, year] = parts.map(Number);
-                    if (year < 100) year += 2000;
-                    const d = new Date(year, month - 1, day);
-                    if (!isNaN(d.getTime())) return d;
-                }
-            }
+            const parts = match[1].split(/[-\/]/);
+            if (parts.length !== 3) continue;
+
+            let [day, month, year] = parts.map(Number);
+            if (!day || !month || !year) continue;
+            if (year < 100) year += 2000;
+
+            // Validate DD-MM-YYYY bounds before constructing date
+            if (day < 1 || day > 31 || month < 1 || month > 12) continue;
+
+            const d = new Date(year, month - 1, day);
+            if (!isNaN(d.getTime())) return d;
         }
+
+        // Text month date: "29 Mar 2026" or "29-Mar-26"
+        const textMonthMatch = text.match(/(\d{1,2}[\s-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s-]\d{2,4})/i);
+        if (textMonthMatch) {
+            const parsed = new Date(textMonthMatch[1]);
+            if (!isNaN(parsed.getTime())) return parsed;
+        }
+
         return new Date(); // fallback to now
     }
 

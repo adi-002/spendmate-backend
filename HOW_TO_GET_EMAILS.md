@@ -94,7 +94,7 @@ You should see a list of your recent transaction-related emails!
 
 ### Empty emails array
 **Possible reasons**:
-- No transaction-related emails in your Gmail (last 7 days by default)
+- No transaction-related emails in your Gmail (last 30 days by default)
 - Try adjusting the date filter with `?after=2026/01/01`
 - Check if you have bank/payment notification emails
 

@@ -78,10 +78,19 @@ exports.syncEmails = async (req, res) => {
             return res.status(400).json({ message: 'Gmail not connected. Please authorize first.' });
         }
 
+        // Resolve date window: explicit query param wins, else use user sync preference.
+        let afterDate = req.query.after;
+        if (!afterDate) {
+            const windowHours = Number(user.syncWindowHours) || 24;
+            const start = new Date();
+            start.setHours(start.getHours() - windowHours);
+            afterDate = start.toISOString().split('T')[0].replace(/-/g, '/');
+        }
+
         // Fetch transaction emails
         const emails = await emailService.fetchTransactionEmails(req.user._id, {
-            maxResults: req.query.maxResults || 50,
-            after: req.query.after, // Optional: date filter
+            maxResults: parseInt(req.query.maxResults, 10) || 100,
+            after: afterDate,
         });
 
         let processedCount = 0;
@@ -107,6 +116,8 @@ exports.syncEmails = async (req, res) => {
                 const transactionData = transactionParser.parseTransaction(body, subject, sender);
 
                 if (transactionData) {
+                    // Use the email header date as source-of-truth instead of parsing date strings from body text.
+                    transactionData.date = emailDate;
                     const docToInsert = {
                         user: req.user._id,
                         ...transactionData,
@@ -233,10 +244,19 @@ exports.getRecentEmails = async (req, res) => {
             return res.status(400).json({ message: 'Gmail not connected. Please authorize first.' });
         }
 
+        // Resolve date window: explicit query param wins, else use user sync preference.
+        let afterDate = req.query.after;
+        if (!afterDate) {
+            const windowHours = Number(user.syncWindowHours) || 24;
+            const start = new Date();
+            start.setHours(start.getHours() - windowHours);
+            afterDate = start.toISOString().split('T')[0].replace(/-/g, '/');
+        }
+
         // Fetch emails
         const emails = await emailService.fetchTransactionEmails(req.user._id, {
-            maxResults: parseInt(req.query.maxResults) || 50,
-            after: req.query.after,
+            maxResults: parseInt(req.query.maxResults) || 100,
+            after: afterDate,
         });
 
         // Extract email metadata

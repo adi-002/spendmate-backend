@@ -94,36 +94,53 @@ class EmailService {
      */
     async fetchTransactionEmails(userId, options = {}) {
         const gmail = await this.getGmailClient(userId);
-        const user = await User.findById(userId);
 
         // Build search query for transaction emails
         const query = this.buildSearchQuery(options);
+        const targetResults = Math.max(1, parseInt(options.maxResults, 10) || 50);
+        const pageSize = 100;
 
-        // Get message IDs
-        const response = await gmail.users.messages.list({
-            userId: 'me',
-            q: query,
-            maxResults: options.maxResults || 50,
-        });
-
-        if (!response.data.messages) {
-            return [];
-        }
-
-        // Fetch full message details
+        // Paginate through Gmail results and keep collecting until we reach targetResults.
         const emails = [];
-        for (const message of response.data.messages) {
-            try {
-                const msg = await gmail.users.messages.get({
-                    userId: 'me',
-                    id: message.id,
-                    format: 'full',
-                });
-                if (this.hasDebitOrCreditSignal(msg.data)) {
-                    emails.push(msg.data);
+        let pageToken = undefined;
+        let pagesFetched = 0;
+        const maxPages = 30; // Safety cap; scans deeper when inbox is large.
+
+        while (emails.length < targetResults && pagesFetched < maxPages) {
+            const response = await gmail.users.messages.list({
+                userId: 'me',
+                q: query,
+                maxResults: pageSize,
+                pageToken,
+            });
+
+            const messages = response?.data?.messages || [];
+            if (!messages.length) {
+                break;
+            }
+
+            for (const message of messages) {
+                try {
+                    const msg = await gmail.users.messages.get({
+                        userId: 'me',
+                        id: message.id,
+                        format: 'full',
+                    });
+                    if (this.hasDebitOrCreditSignal(msg.data)) {
+                        emails.push(msg.data);
+                        if (emails.length >= targetResults) {
+                            break;
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error fetching message ${message.id}:`, error.message);
                 }
-            } catch (error) {
-                console.error(`Error fetching message ${message.id}:`, error.message);
+            }
+
+            pageToken = response?.data?.nextPageToken;
+            pagesFetched++;
+            if (!pageToken) {
+                break;
             }
         }
 
@@ -132,8 +149,9 @@ class EmailService {
             lastEmailSync: new Date(),
         });
 
-        console.log(`[EmailSync] Filtered emails with debit/credit signal: ${emails.length}`);
-        return emails;
+        const limitedEmails = emails.slice(0, targetResults);
+        console.log(`[EmailSync] Filtered emails with debit/credit signal: ${limitedEmails.length} (pages fetched: ${pagesFetched})`);
+        return limitedEmails;
     }
 
     /**
@@ -214,7 +232,7 @@ class EmailService {
         const subjectQuery = subjectKeywords.map(k => `subject:"${k}"`).join(' OR ');
 
         parts.push(`((${fromQuery}) OR (${keywordQuery}) OR (${subjectQuery}))`);
-        // Hard requirement: transaction signal must mention debited/credited.
+        // Hard requirement: must contain debited/credited signal.
         parts.push(`("debited" OR "credited")`);
 
         const finalQuery = parts.join(' ');
@@ -223,12 +241,19 @@ class EmailService {
     }
 
     /**
-     * Keep only emails that clearly indicate money movement.
-     * User requirement: snippet should contain "debited" or "credited".
+     * Strict filter: "debited" or "credited" must be present.
+     * Also require amount/ref cue to avoid noisy alerts.
      */
     hasDebitOrCreditSignal(message) {
         const snippet = String(message?.snippet || '').toLowerCase();
-        return /\b(debited|credited)\b/.test(snippet);
+        const subject = this.getEmailSubject(message).toLowerCase();
+        const body = this.getEmailBody(message).toLowerCase();
+        const haystack = `${snippet} ${subject} ${body}`;
+
+        const hasTxnVerb = /\b(debited|credited)\b/.test(haystack);
+        const hasAmountCue = /(?:\brs\.?\b|\binr\b|₹)\s*\d|(?:\d[\d,]*\.\d{1,2})/.test(haystack);
+        const hasRefCue = /\b(utr|ref(?:erence)?\s*(?:no|number)?|txn(?:\s*id)?|transaction\s*id)\b/.test(haystack);
+        return hasTxnVerb && (hasAmountCue || hasRefCue);
     }
 
     /**

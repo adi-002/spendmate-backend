@@ -174,7 +174,7 @@ curl --location 'http://localhost:5001/api/transactions' \
 
 ### No transactions created after sync
 **Possible reasons**:
-- No transaction emails in your Gmail (last 7 days)
+- No transaction emails in your Gmail (last 30 days)
 - Emails are in a format the parser doesn't recognize yet
 - Check the sync response for `failedToParse` count
 

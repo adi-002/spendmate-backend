@@ -14,7 +14,7 @@ const userSchema = new mongoose.Schema({
   // Sync preferences
   autoSyncEnabled: { type: Boolean, default: true }, // Enable automatic scheduled syncing
   emailSyncFrequency: { type: String, default: '6h' }, // Sync frequency: 1h, 6h, 12h, 24h
-  syncWindowHours: { type: Number, default: 24 }, // How far back to look for emails
+  syncWindowHours: { type: Number, default: 720 }, // How far back to look for emails (30 days)
   lastSyncStatus: { type: String, enum: ['success', 'failed', 'pending'], default: 'pending' },
   syncErrorCount: { type: Number, default: 0 }, // Track consecutive failures
 });

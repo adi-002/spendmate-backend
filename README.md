@@ -696,7 +696,7 @@ Content-Type: application/json
 **Field Options:**
 - `autoSyncEnabled`: `true` or `false` - Enable/disable automatic syncing
 - `emailSyncFrequency`: `"1h"`, `"6h"`, `"12h"`, or `"24h"` - Sync frequency
-- `syncWindowHours`: Number (1-168) - How far back to look for emails
+- `syncWindowHours`: Number (1-720) - How far back to look for emails
 
 **Response:** `200 OK`
 ```json
