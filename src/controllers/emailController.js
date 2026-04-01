@@ -79,7 +79,15 @@ exports.exchangeServerAuthCode = async (req, res) => {
         });
     } catch (error) {
         console.error('Error exchanging server auth code:', error);
-        res.status(500).json({ message: 'Failed to link Gmail', error: error.message });
+        const raw = error?.message || String(error);
+        // Single-use codes or parallel app flows cause this; client should sign in once, not double-tap.
+        if (/invalid_grant|already been used|already redeemed|code has been used/i.test(raw)) {
+            return res.status(400).json({
+                message:
+                    'This Google sign-in code was already used or expired. Sign out in the app and tap “Continue with Google” once.',
+            });
+        }
+        res.status(500).json({ message: 'Failed to link Gmail', error: raw });
     }
 };
 
